@@ -29,13 +29,9 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let points_of_interest = read_csv(&String::from("./places.csv")).unwrap();
     for poi in points_of_interest.iter() {
-        println!("{}", poi.name);
+        println!("{:?}", poi);
     }
-    let res = get_matrix(vec![
-        [16.861612666414082, 52.34510671453016],
-        [16.856603571624373, 52.34090729182826]
-    ], vec!["a".into(), "b".into()])
-    .await;
+    let res = get_matrix(&points_of_interest).await;
 
     println!("{:#?}", res);
 

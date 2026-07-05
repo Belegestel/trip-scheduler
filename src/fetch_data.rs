@@ -3,6 +3,7 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{env, fs, path::Path};
 
+#[derive(Debug)]
 pub struct PointOfInterest {
     pub name: String,
     pub location: (f64, f64),
@@ -25,13 +26,13 @@ struct MatrixRequest {
     units: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct MatrixResponse {
     distances: Vec<Vec<Option<f64>>>,
     durations: Vec<Vec<Option<f64>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DistanceMatrix {
     pub keys: Vec<String>,
     pub distances: Vec<Vec<Option<f64>>>,
@@ -51,12 +52,20 @@ impl DistanceMatrix {
     }
 }
 
-pub async fn get_matrix(coords: Vec<[f64; 2]>, labels: Vec<String>) -> Result<DistanceMatrix> {
+pub async fn get_matrix(points: &Vec<PointOfInterest>) -> Result<DistanceMatrix> {
+    let coords: Vec<[f64; 2]> = points
+        .iter()
+        .map(|x| [x.location.1, x.location.0])
+        .collect();
+    let labels: Vec<String> = points 
+        .iter()
+        .map(|x| x.name.clone())
+        .collect();
     let target_file = Path::new("./data/cache.json");
     if target_file.exists() {
         let cached = fs::read_to_string(target_file)?;
-        let data: MatrixResponse = serde_json::from_str(&cached)?;
-        Ok(DistanceMatrix::from(data, labels))
+        let data: DistanceMatrix = serde_json::from_str(&cached)?;
+        Ok(data)
     } else {
         println!("Fetching data...");
         let api_key = env::var("API_KEY").unwrap();
@@ -78,7 +87,8 @@ pub async fn get_matrix(coords: Vec<[f64; 2]>, labels: Vec<String>) -> Result<Di
             .error_for_status()?
             .json::<MatrixResponse>()
             .await?;
-        fs::write(target_file, serde_json::to_string_pretty(&matrix_resp)?).unwrap();
-        Ok(DistanceMatrix::from(matrix_resp, labels))
+        let dist_matrix = DistanceMatrix::from(matrix_resp, labels);
+        fs::write(target_file, serde_json::to_string_pretty(&dist_matrix)?).unwrap();
+        Ok(dist_matrix)
     }
 }
