@@ -1,9 +1,9 @@
 use csv;
 use std::{error::Error, fs};
-mod fetch_data;
+mod utils;
 use anyhow;
 use dotenvy;
-use fetch_data::{get_matrix, PointOfInterest};
+use utils::{get_matrix, PointOfInterest};
 fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
     let mut res = vec![];
     let file_contents = fs::read_to_string(path).expect("Should have been able to read the file");

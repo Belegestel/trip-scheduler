@@ -53,6 +53,7 @@ impl DistanceMatrix {
 }
 impl Display for DistanceMatrix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let keys: Vec<String> = self.keys.iter().enumerate().map(|x| format!("{}. {}", x.0 + 1, x.1)).collect();
         fn get_table(keys: &Vec<String>, distances: &Vec<Vec<f32>>, durations: &Vec<Vec<f32>>, is_distance: bool) -> String {
             let labels_width = keys
                 .iter()
@@ -66,7 +67,7 @@ impl Display for DistanceMatrix {
                     y.iter().map(|x| if is_distance {
                         format!("{:.1}km", x / 1000.0)
                     } else {
-                        format!("{}'", x.round())
+                        format!("{}'", (x / 60.0).round())
                     }).collect()
                 }).collect();
             let column_widths: Vec<usize> = table_content
@@ -95,8 +96,8 @@ impl Display for DistanceMatrix {
                 )
                 .collect::<String>()
         }
-        let res = get_table(&self.keys, &self.distances, &self.durations, true)
-               + &get_table(&self.keys, &self.distances, &self.durations, false);
+        let res = get_table(&keys, &self.distances, &self.durations, true)
+               + &get_table(&keys, &self.distances, &self.durations, false);
         write!(f, "{}", res)
     }
 }
