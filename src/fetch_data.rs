@@ -53,35 +53,39 @@ impl DistanceMatrix {
 }
 impl Display for DistanceMatrix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let labels_width = self.keys
-            .iter()
-            .enumerate()
-            .map(|x| x.1.len() + format!("{}", x.0 + 1).len())
-            .max()
-            .unwrap();
-        let table_content: Vec<Vec<String>> = self.distances
-            .iter()
-            .zip(self.durations.iter())
-            .map(|y| {
-                y.0.iter().zip(y.1.iter()).map(|x| format!("{:.1}km / {}'", x.0 / 1000.0, x.1.round())).collect()
-            }).collect();
-        let column_widths: Vec<usize> = table_content
-            .iter()
-            .map(
-                |x| x
-                    .iter()
-                    .map(|y| y.len())
-                    .max()
-                    .unwrap()
-                )
-            .collect();
-        
-        let header = " ".repeat(labels_width).to_string() +
-            &column_widths.iter().enumerate().map(|x| format!("| {:width$}", x.0 + 1, width = x.1)).collect::<String>() + "\n";
-        let header_length = header.len();
+        fn get_table(keys: &Vec<String>, distances: &Vec<Vec<f32>>, durations: &Vec<Vec<f32>>, is_distance: bool) -> String {
+            let labels_width = keys
+                .iter()
+                .enumerate()
+                .map(|x| x.1.len() + format!("{}", x.0 + 1).len())
+                .max()
+                .unwrap();
+            let table_content: Vec<Vec<String>> = (if is_distance { distances } else { durations })
+                .iter()
+                .map(|y| {
+                    y.iter().map(|x| if is_distance {
+                        format!("{:.1}km", x / 1000.0)
+                    } else {
+                        format!("{}'", x.round())
+                    }).collect()
+                }).collect();
+            let column_widths: Vec<usize> = table_content
+                .iter()
+                .map(
+                    |x| x
+                        .iter()
+                        .map(|y| y.len())
+                        .max()
+                        .unwrap()
+                    )
+                .collect();
+            
+            let header = " ".repeat(labels_width).to_string() +
+                &column_widths.iter().enumerate().map(|x| format!("| {:width$}", x.0 + 1, width = x.1)).collect::<String>() + "\n";
+            let header_length = header.len();
 
-        let res: String = header + &"-".repeat(header_length + 5) + "\n"
-            + &self.keys
+            header + &"-".repeat(header_length + 5) + "\n"
+                + &keys
                 .iter()
                 .zip(table_content.iter())
                 .map(|x|
@@ -89,7 +93,10 @@ impl Display for DistanceMatrix {
                     &x.1.iter().zip(column_widths.iter()).map(|y| format!("| {:width$}", y.0, width = y.1)).collect::<String>() +
                     "\n"
                 )
-                .collect::<String>();
+                .collect::<String>()
+        }
+        let res = get_table(&self.keys, &self.distances, &self.durations, true)
+               + &get_table(&self.keys, &self.distances, &self.durations, false);
         write!(f, "{}", res)
     }
 }
