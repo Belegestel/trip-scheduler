@@ -3,7 +3,8 @@ use std::{error::Error, fs};
 mod utils;
 use anyhow;
 use dotenvy;
-use utils::{get_matrix, PointOfInterest};
+use utils::{get_matrix, PointOfInterest, Config};
+
 fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
     let mut res = vec![];
     let file_contents = fs::read_to_string(path).expect("Should have been able to read the file");
@@ -27,7 +28,10 @@ fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let points_of_interest = read_csv(&String::from("./places.csv")).unwrap();
+    let cfg = Config::new().unwrap();
+    let mut points_of_interest = read_csv(&String::from("./places.csv")).unwrap();
+    points_of_interest.push(PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true));
+
     let res = get_matrix(&points_of_interest).await;
 
     println!("{}", res.unwrap());

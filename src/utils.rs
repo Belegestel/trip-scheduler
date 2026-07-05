@@ -102,6 +102,18 @@ impl Display for DistanceMatrix {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    pub origin: (f64, f64)
+}
+impl Config {
+    pub fn new() -> Result<Self> {
+        let file = fs::read_to_string("./config.json")?;
+        Ok(serde_json::from_str(&file)?)
+    }
+}
+
+
 pub async fn get_matrix(points: &Vec<PointOfInterest>) -> Result<DistanceMatrix> {
     let coords: Vec<[f64; 2]> = points
         .iter()
