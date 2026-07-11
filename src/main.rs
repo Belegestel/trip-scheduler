@@ -1,6 +1,7 @@
 use csv;
 use std::{error::Error, fs};
 mod utils;
+mod solver;
 use anyhow;
 use dotenvy;
 use utils::{get_matrix, PointOfInterest, Config};
