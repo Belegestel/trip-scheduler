@@ -104,7 +104,8 @@ impl Display for DistanceMatrix {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    pub origin: (f64, f64)
+    pub origin: (f64, f64),
+    pub day_weights: Vec<f32>,
 }
 impl Config {
     pub fn new() -> Result<Self> {

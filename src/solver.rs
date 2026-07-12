@@ -1,18 +1,24 @@
-use crate::utils::{DistanceMatrix, PointOfInterest};
+use crate::{tsp::TSPCache, utils::{DistanceMatrix, PointOfInterest}};
+use anyhow::Result;
 use itertools::Itertools;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    io::Write,
+};
 
 pub struct Solver {
-    matrix: &'static DistanceMatrix,
-    mandatory: Vec<bool>,
-    day_weights: Vec<f32>,
-    best_solutions: HashMap<u8, ReadySolution>,
+    pub matrix: DistanceMatrix,
+    pub mandatory: Vec<bool>,
+    pub day_weights: Vec<f32>,
+    pub best_solutions: HashMap<u8, ReadySolution>,
 }
 impl Solver {
     pub fn new(
-        distance_matrix: &'static DistanceMatrix,
+        distance_matrix: DistanceMatrix,
         poi: &Vec<PointOfInterest>,
         day_weights: Vec<f32>,
+        tsp: TSPCache,
     ) -> Self {
         Self {
             matrix: distance_matrix,
@@ -29,6 +35,7 @@ impl Solver {
             .iter()
             .map(|x| days_total + if *x { 0 } else { 1 })
             .collect();
+        let choices: Vec<_> = choices[..choices.len() - 1].to_vec();
 
         let mut assignment = vec![0; choices.len()];
         loop {
@@ -74,9 +81,23 @@ impl Solver {
             }
         }
     }
+
+    pub fn save(&self) -> Result<()> {
+        let filename = format!(
+            "results/{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
+        let file = std::fs::File::create(filename)?;
+        serde_json::to_writer_pretty(file, &self.best_solutions)?;
+        Ok(())
+    }
 }
 
-struct ReadySolution {
+#[derive(Serialize)]
+pub struct ReadySolution {
     assignments: Vec<Option<u8>>,
     max_time: f32,
     number_of_additional: u8,
@@ -112,13 +133,16 @@ impl ReadySolution {
             })
             .collect();
 
+        let origin_idx = solver.matrix.distances.len() - 1;
         for (day, day_weight) in days.iter().zip(solver.day_weights.iter()) {
             let mut day_time = f32::INFINITY;
             for path in day.iter().permutations(day.len()) {
+                let path = std::iter::once(&origin_idx)
+                    .chain(path)
+                    .chain(std::iter::once(&origin_idx));
                 let path_time: f32 = path
-                    .iter()
                     .tuple_windows()
-                    .map(|(a, b)| solver.matrix.durations[**a][**b])
+                    .map(|(a, b)| solver.matrix.durations[*a][*b])
                     .sum::<f32>()
                     / day_weight;
                 if path_time < day_time {

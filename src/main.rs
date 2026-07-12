@@ -2,9 +2,14 @@ use csv;
 use std::{error::Error, fs};
 mod utils;
 mod solver;
+mod tsp;
 use anyhow;
 use dotenvy;
 use utils::{get_matrix, PointOfInterest, Config};
+
+use solver::Solver;
+use tsp::{TSPLookup, TSPCache};
+
 
 fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
     let mut res = vec![];
@@ -33,9 +38,16 @@ async fn main() -> anyhow::Result<()> {
     let mut points_of_interest = read_csv(&String::from("./places.csv")).unwrap();
     points_of_interest.push(PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true));
 
-    let res = get_matrix(&points_of_interest).await;
+    let matrix = get_matrix(&points_of_interest).await.expect("File input failed (PoI)");
 
-    println!("{}", res.unwrap());
+    println!("{}", &matrix);
+
+    let tspc = TSPCache::build_cache(&matrix);
+    println!("TSP cache calculated");
+
+    let mut solver = Solver::new(matrix, &points_of_interest, cfg.day_weights.clone(), tspc);
+    solver.run();
+    solver.save()?;
 
     Ok(())
 }
