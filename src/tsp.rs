@@ -164,7 +164,7 @@ pub struct TSPCache {
     n: usize,
 }
 impl TSPCache {
-    pub fn get(&self, included: Vec<bool>) -> f32 {
+    pub fn get(&self, included: &Vec<bool>) -> f32 {
         let mut mask = 0usize;
 
         for (i, &v) in included.iter().enumerate() {
