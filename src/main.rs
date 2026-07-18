@@ -1,14 +1,12 @@
 use csv;
 use std::{error::Error, fs};
 mod utils;
-mod solver;
 mod tsp;
 use anyhow;
 use dotenvy;
 use utils::{get_matrix, PointOfInterest, Config};
 
-use solver::Solver;
-use tsp::{TSPLookup, TSPCache};
+use tsp::{TSPLookup};
 
 
 fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
@@ -36,18 +34,15 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let cfg = Config::new().unwrap();
     let mut points_of_interest = read_csv(&String::from("./places.csv")).unwrap();
-    points_of_interest.push(PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true));
+    points_of_interest.insert(0, PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true));
 
     let matrix = get_matrix(&points_of_interest).await.expect("File input failed (PoI)");
 
     println!("{}", &matrix);
 
-    let tspc = TSPCache::build_cache(&matrix);
-    println!("TSP cache calculated");
+    TSPLookup::new(&matrix);
 
-    let mut solver = Solver::new(matrix, &points_of_interest, cfg.day_weights.clone(), tspc);
-    solver.run();
-    solver.save()?;
+    println!("Done");
 
     Ok(())
 }
