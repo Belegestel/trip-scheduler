@@ -1,49 +1,45 @@
-use std::collections::HashMap;
-
+use std::io::Write;
 use crate::utils::DistanceMatrix;
-use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-pub struct TSPLookup(HashMap<u32, f32>);
+pub struct TSPLookup(Vec<f32>);
 impl TSPLookup {
     pub fn new(dm: &DistanceMatrix) -> Self {
-        let n = dm.distances.len();
-        let mut g: HashMap<(u32, usize), f32> = HashMap::new();
+        let n = dm.durations.len();
+        let mut g: Vec<f32> = vec![f32::INFINITY; (1usize << (n - 1)) * (n - 1)];
+        let get_idx = |subset: usize, node: usize| subset * (n - 1) + node;
         for k in 0..(n - 1) {
-            g.insert((1u32 << k, k), dm.distances[0][k + 1]);
+            g[get_idx(1 << k, k)] = dm.durations[0][k + 1];
         }
 
         for size in 2..n {
-            println!("Size {}", size);
+            println!("\x1B[1A\x1B[2KPath computation: [{}{}]", "#".repeat(size - 2), ".".repeat(n - size - 1));
+            std::io::stdout().flush().unwrap();
             for subset in subsets(n - 1, size) {
                 for k in iterate_bits_as_indices(&subset) {
                     let v = iterate_bits_as_indices(&subset)
                         .filter(|&x| x != k)
                         .map(|x| {
-                            g.get(&(subset ^ (1 << k), x)).unwrap() + dm.distances[x + 1][k + 1]
+                            g[get_idx((subset ^ (1 << k)).try_into().unwrap(), x)] + dm.durations[x + 1][k + 1]
                         })
                         .fold(f32::INFINITY, |a, b| a.min(b));
-                    g.insert((subset, k), v);
+                    g[get_idx(subset.try_into().unwrap(), k)] = v;
                 }
             }
         }
 
         let result: Vec<_> = (0..(1u32 << (n - 1)))
             .map(|subset| {
-                (
-                    subset,
-                    iterate_bits_as_indices(&subset)
-                        .map(|x| g.get(&(subset, x)).unwrap() + dm.distances[x + 1][0])
-                        .fold(f32::INFINITY, |a, b| a.min(b)),
-                )
+                iterate_bits_as_indices(&subset)
+                    .map(|x| g[get_idx(subset.try_into().unwrap(), x)] + dm.durations[x + 1][0])
+                    .fold(f32::INFINITY, |a, b| a.min(b))
             })
             .collect();
-
-        TSPLookup(HashMap::from_iter(result))
+        
+        TSPLookup(result)
     }
 
     pub fn get(&self, subset: &u32) -> f32 {
-        *self.0.get(subset).unwrap()
+        self.0[*subset as usize]
     }
 }
 
