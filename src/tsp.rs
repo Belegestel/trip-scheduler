@@ -1,9 +1,9 @@
 use std::io::Write;
-use crate::utils::DistanceMatrix;
+use crate::utils::{DistanceMatrix, PointOfInterest};
 
 pub struct TSPLookup(Vec<f32>);
 impl TSPLookup {
-    pub fn new(dm: &DistanceMatrix) -> Self {
+    pub fn new(dm: &DistanceMatrix, poi: &Vec<PointOfInterest>) -> Self {
         let n = dm.durations.len();
         let mut g: Vec<f32> = vec![f32::INFINITY; (1usize << (n - 1)) * (n - 1)];
         let get_idx = |subset: usize, node: usize| subset * (n - 1) + node;
@@ -31,7 +31,8 @@ impl TSPLookup {
             .map(|subset| {
                 iterate_bits_as_indices(&subset)
                     .map(|x| g[get_idx(subset.try_into().unwrap(), x)] + dm.durations[x + 1][0])
-                    .fold(f32::INFINITY, |a, b| a.min(b))
+                    .fold(f32::INFINITY, |a, b| a.min(b)) +
+                iterate_bits_as_indices(&subset).map(|x| poi[x + 1].duration).sum::<f32>()
             })
             .collect();
         
@@ -43,7 +44,7 @@ impl TSPLookup {
     }
 }
 
-fn subsets(size: usize, number: usize) -> impl Iterator<Item = u32> {
+pub fn subsets(size: usize, number: usize) -> impl Iterator<Item = u32> {
     let limit = 1u32 << size;
     let mut mask = if number == 0 { 0 } else { (1u32 << number) - 1 };
     std::iter::from_fn(move || {
