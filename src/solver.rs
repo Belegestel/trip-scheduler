@@ -18,6 +18,7 @@ pub struct Solver {
     base_weights: Vec<u32>,
     mandatory_idx: Vec<usize>,
     optional_idx: Vec<usize>,
+    sequence_len: usize,
 }
 impl Solver {
     pub fn new(
@@ -37,6 +38,7 @@ impl Solver {
             base_weights: vec![],
             mandatory_idx: vec![],
             optional_idx: vec![],
+            sequence_len: 0,
         }
     }
 
@@ -54,7 +56,7 @@ impl Solver {
 
     pub fn run(&mut self) {
         // Constants
-        let UPPER_BOUND_RANDOM_SIZE = 100_000;
+        let UPPER_BOUND_RANDOM_SIZE = 1_000_000;
 
         let mut local_rng = rng();
         self.bases = self
@@ -83,6 +85,7 @@ impl Solver {
             .filter(|(_, x)| !**x)
             .map(|(idx, _)| idx)
             .collect();
+        self.sequence_len = self.mandatory_idx.len() + self.optional_idx.len();
         let days_n = self.day_weights.len();
         let total_mandatory_assignments = days_n.pow(self.mandatory_idx.len() as u32);
 
@@ -115,6 +118,43 @@ impl Solver {
         println!("Best: {}", best);
     }
 
+    fn dfs(
+        &self,
+        upper_bound: &mut f32,
+        best_solution: &mut u64,
+        subset: &u32,
+        solution: u64,
+        depth: usize,
+    ) {
+        let score = self.partial_evaluate_solution(&solution, depth);
+        if score >= *upper_bound {
+            // If worse than current best, stop recursion
+            return;
+        }
+        if depth == self.sequence_len {
+            // Better than current best, save and stop recursion
+            // because we've already reached the end
+            *upper_bound = score;
+            *best_solution = solution;
+            return;
+        }
+
+        // Increase by one and recursion
+        if subset & (1u32 << depth) == 0 {
+            self.dfs(upper_bound, best_solution, subset, solution, depth + 1);
+        } else {
+            for i in 0..self.bases[depth] {
+                self.dfs(
+                    upper_bound,
+                    best_solution,
+                    subset,
+                    solution + (self.base_weights[depth] * i) as u64,
+                    depth + 1,
+                );
+            }
+        }
+    }
+
     fn bnb(&self, upper_bound: &mut f32, best_solution: &mut u64, optional_count: u8) {
         let _ = subsets(self.optional_idx.len(), optional_count.into()).for_each(|mut subset| {
             println!("Starting subsets");
@@ -132,7 +172,6 @@ impl Solver {
                 .map(|x| self.base_weights[x] * (self.bases[x] - 1))
                 .map(|x| x as u64)
                 .sum::<u64>();
-            let sequence_len = self.mandatory_idx.len() + self.optional_idx.len();
 
             let mut depth = 0;
             while solution < max_solution_val {
@@ -140,15 +179,14 @@ impl Solver {
                 let mut i = 0;
                 // let score = self.evaluate_solution(&solution);
                 let score = self.partial_evaluate_solution(&solution, depth);
-                if depth == sequence_len {
+                if depth == self.sequence_len {
                     let score = self.evaluate_solution(&solution);
                     if score < *upper_bound {
                         *upper_bound = score;
                         *best_solution = solution;
                     }
-                }
-                else if depth < sequence_len && score >= *upper_bound {
-                    solution += (depth..sequence_len)
+                } else if depth < self.sequence_len && score >= *upper_bound {
+                    solution += (depth..self.sequence_len)
                         .map(|x| (self.bases[x] - 1) * self.base_weights[x])
                         .map(|x| x as u64)
                         .sum::<u64>();
@@ -156,7 +194,7 @@ impl Solver {
                     depth -= 1;
                     continue;
                 }
-                'incr_loop: while i < sequence_len {
+                'incr_loop: while i < self.sequence_len {
                     if subset & (1 << i) != 0 {
                         i += 1;
                         continue;
@@ -169,7 +207,7 @@ impl Solver {
                     }
                     i += 1;
                 }
-                if i >= sequence_len {
+                if i >= self.sequence_len {
                     return;
                 }
             }
