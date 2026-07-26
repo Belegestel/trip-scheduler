@@ -8,13 +8,15 @@ pub struct PointOfInterest {
     pub name: String,
     pub location: (f64, f64),
     pub obligatory: bool,
+    pub duration: f32,
 }
 impl PointOfInterest {
-    pub fn new(name: String, lat: f64, lon: f64, obligatory: bool) -> Self {
+    pub fn new(name: String, lat: f64, lon: f64, obligatory: bool, duration: f32) -> Self {
         Self {
             name,
             location: (lat, lon),
             obligatory,
+            duration
         }
     }
 }
@@ -157,4 +159,35 @@ pub async fn get_matrix(points: &Vec<PointOfInterest>) -> Result<DistanceMatrix>
         fs::write(target_file, serde_json::to_string_pretty(&dist_matrix)?).unwrap();
         Ok(dist_matrix)
     }
+}
+
+pub fn subsets(size: usize, number: usize) -> impl Iterator<Item = u32> {
+    let limit = 1u32 << size;
+    let mut mask = if number == 0 { 0 } else { (1u32 << number) - 1 };
+    std::iter::from_fn(move || {
+        if mask >= limit {
+            return None;
+        }
+        let result = mask as u32;
+        if number == 0 {
+            mask = limit;
+        } else {
+            let c = mask & mask.wrapping_neg();
+            let r = mask + c;
+            mask = (((r ^ mask) >> 2) / c) | r;
+        }
+        Some(result)
+    })
+}
+
+pub fn iterate_bits_as_indices(num: &u32) -> impl Iterator<Item = usize> {
+    let mut mask = *num;
+    std::iter::from_fn(move || {
+        while mask != 0 {
+            let i = mask.trailing_zeros();
+            mask &= mask - 1;
+            return Some(i as usize);
+        }
+        None
+    })
 }

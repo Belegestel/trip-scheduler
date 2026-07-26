@@ -1,5 +1,5 @@
+use crate::utils::{DistanceMatrix, PointOfInterest, subsets, iterate_bits_as_indices};
 use std::io::Write;
-use crate::utils::{DistanceMatrix, PointOfInterest};
 
 pub struct TSPLookup(Vec<f32>);
 impl TSPLookup {
@@ -12,14 +12,19 @@ impl TSPLookup {
         }
 
         for size in 2..n {
-            println!("\x1B[1A\x1B[2KPath computation: [{}{}]", "#".repeat(size - 2), ".".repeat(n - size - 1));
+            println!(
+                "\x1B[1A\x1B[2KPath computation: [{}{}]",
+                "#".repeat(size - 2),
+                ".".repeat(n - size - 1)
+            );
             std::io::stdout().flush().unwrap();
             for subset in subsets(n - 1, size) {
                 for k in iterate_bits_as_indices(&subset) {
                     let v = iterate_bits_as_indices(&subset)
                         .filter(|&x| x != k)
                         .map(|x| {
-                            g[get_idx((subset ^ (1 << k)).try_into().unwrap(), x)] + dm.durations[x + 1][k + 1]
+                            g[get_idx((subset ^ (1 << k)).try_into().unwrap(), x)]
+                                + dm.durations[x + 1][k + 1]
                         })
                         .fold(f32::INFINITY, |a, b| a.min(b));
                     g[get_idx(subset.try_into().unwrap(), k)] = v;
@@ -31,46 +36,21 @@ impl TSPLookup {
             .map(|subset| {
                 iterate_bits_as_indices(&subset)
                     .map(|x| g[get_idx(subset.try_into().unwrap(), x)] + dm.durations[x + 1][0])
-                    .fold(f32::INFINITY, |a, b| a.min(b)) +
-                iterate_bits_as_indices(&subset).map(|x| poi[x + 1].duration).sum::<f32>()
+                    .fold(f32::INFINITY, |a, b| a.min(b))
+                    + iterate_bits_as_indices(&subset)
+                        .map(|x| poi[x + 1].duration)
+                        .sum::<f32>()
             })
             .collect();
-        
+
         TSPLookup(result)
     }
 
     pub fn get(&self, subset: &u32) -> f32 {
-        self.0[*subset as usize]
-    }
-}
-
-pub fn subsets(size: usize, number: usize) -> impl Iterator<Item = u32> {
-    let limit = 1u32 << size;
-    let mut mask = if number == 0 { 0 } else { (1u32 << number) - 1 };
-    std::iter::from_fn(move || {
-        if mask >= limit {
-            return None;
-        }
-        let result = mask as u32;
-        if number == 0 {
-            mask = limit;
+        if *subset == 0 {
+            0.0
         } else {
-            let c = mask & mask.wrapping_neg();
-            let r = mask + c;
-            mask = (((r ^ mask) >> 2) / c) | r;
+            self.0[*subset as usize]
         }
-        Some(result)
-    })
-}
-
-fn iterate_bits_as_indices(num: &u32) -> impl Iterator<Item = usize> {
-    let mut mask = *num;
-    std::iter::from_fn(move || {
-        while mask != 0 {
-            let i = mask.trailing_zeros();
-            mask &= mask - 1;
-            return Some(i as usize);
-        }
-        None
-    })
+    }
 }

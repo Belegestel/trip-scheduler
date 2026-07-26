@@ -1,106 +1,201 @@
 use crate::{
-    tsp::TSPCache,
-    utils::{DistanceMatrix, PointOfInterest},
+    tsp::TSPLookup,
+    utils::{DistanceMatrix, PointOfInterest, iterate_bits_as_indices, subsets},
 };
 use anyhow::Result;
-use serde::Serialize;
-use std::{collections::HashMap, io::Write};
+use rand::{rng, seq::index};
+use rayon::*;
+use std::collections::HashMap;
 
 pub struct Solver {
     pub matrix: DistanceMatrix,
     pub mandatory: Vec<bool>,
+    pub local_durations: Vec<f32>,
     pub day_weights: Vec<f32>,
-    pub best_solutions: HashMap<u8, ReadySolution>,
-    tsp: TSPCache,
+    pub best_solutions: HashMap<u16, u64>, // Optional count vs assignment
+    tsp: TSPLookup,
+    bases: Vec<u32>,
+    base_weights: Vec<u32>,
+    mandatory_idx: Vec<usize>,
+    optional_idx: Vec<usize>,
 }
 impl Solver {
     pub fn new(
         distance_matrix: DistanceMatrix,
         poi: &Vec<PointOfInterest>,
         day_weights: Vec<f32>,
-        tsp: TSPCache,
+        tsp: TSPLookup,
     ) -> Self {
         Self {
             matrix: distance_matrix,
             mandatory: poi.iter().map(|x| x.obligatory).collect(),
+            local_durations: poi.iter().map(|x| x.duration).collect(),
             day_weights,
             best_solutions: HashMap::new(),
             tsp,
+            bases: vec![],
+            base_weights: vec![],
+            mandatory_idx: vec![],
+            optional_idx: vec![],
         }
     }
 
-    pub fn run(&mut self) {
-        let days_total = self.day_weights.len();
-        let choices: Vec<_> = self
-            .mandatory
-            .iter()
-            .map(|x| days_total + if *x { 0 } else { 1 })
-            .collect();
-        let choices: Vec<_> = choices[..choices.len() - 1].to_vec();
-
-        let mut total_done = 0;
-        let total_to_calculate = {
-            let mandatory_count = self.mandatory.iter().filter(|&&x| x).count();
-            let optional_count = self.mandatory.iter().filter(|&&x| !x).count();
-            (days_total as u128).pow(mandatory_count as u32)
-                * ((days_total + 1) as u128).pow(optional_count as u32)
-        };
-        let mut assignment = vec![0; choices.len()];
-        loop {
-            let solution = ReadySolution::new(
-                assignment
-                    .iter()
-                    .map(|x| {
-                        if *x >= days_total {
-                            None
-                        } else {
-                            Some(*x as u8)
-                        }
-                    })
-                    .collect(),
-                self,
-            );
-            total_done += 1;
-            if total_done % 100000 == 0 {
-                let progress = total_done as f64 / total_to_calculate as f64;
-                print!(
-                    "\r\x1b[2KProgress: [{}{}] {:.1}% ({} / {})",
-                    "#".repeat((progress * 20.0).round() as usize),
-                    ".".repeat(20 - (progress * 20.0).round() as usize),
-                    progress * 100.0,
-                    total_done,
-                    total_to_calculate
-                );
-                std::io::stdout().flush().unwrap();
-            }
-            let current_best_score = self.best_solutions.get(&solution.number_of_additional);
-            let current_score = solution.number_of_additional;
-            match current_best_score {
-                Some(v) => {
-                    if v.max_time > solution.max_time {
-                        self.best_solutions.insert(current_score, solution);
-                    }
-                }
-                None => {
-                    self.best_solutions.insert(current_score, solution);
-                }
-            };
-
-            let mut i = 0;
-            while i < assignment.len() {
-                assignment[i] += 1;
-                if assignment[i] < choices[i] {
-                    break;
-                } else {
-                    assignment[i] = 0;
-                    i += 1;
-                }
-            }
-
-            if i >= assignment.len() {
-                break;
+    fn solution_to_assignment(&self, solution: u64) -> impl Iterator<Item = u32> {
+        // Iterates over assignments for every day
+        let mut masks: Vec<u32> = vec![0; self.day_weights.len()];
+        for (i, (&base, &weight)) in self.bases.iter().zip(&self.base_weights).enumerate() {
+            let v = (solution / (weight as u64)) % (base as u64);
+            if (v as usize) < masks.len() {
+                masks[v as usize] |= 1 << i;
             }
         }
+        masks.into_iter()
+    }
+
+    pub fn run(&mut self) {
+        // Constants
+        let UPPER_BOUND_RANDOM_SIZE = 100_000;
+
+        let mut local_rng = rng();
+        self.bases = self
+            .mandatory
+            .iter()
+            .skip(1)
+            .map(|x| self.day_weights.len() + { if *x { 0 } else { 1 } })
+            .map(|x| x as u32)
+            .collect();
+        self.base_weights = self.bases.iter().scan(1, |a, b| Some((*a) * (b))).collect();
+        // Computation of best distribution consisting only
+        // of mandatory locations
+        self.mandatory_idx = self
+            .mandatory
+            .iter()
+            .skip(1)
+            .enumerate()
+            .filter(|(_, x)| **x)
+            .map(|(idx, _)| idx)
+            .collect();
+        self.optional_idx = self
+            .mandatory
+            .iter()
+            .skip(1)
+            .enumerate()
+            .filter(|(_, x)| !**x)
+            .map(|(idx, _)| idx)
+            .collect();
+        let days_n = self.day_weights.len();
+        let total_mandatory_assignments = days_n.pow(self.mandatory_idx.len() as u32);
+
+        // Pre-bound
+        let mut best = f32::INFINITY;
+        let mut best_solution = 0;
+
+        for solution in index::sample(
+            &mut local_rng,
+            total_mandatory_assignments as usize,
+            UPPER_BOUND_RANDOM_SIZE.min(total_mandatory_assignments) as usize,
+        ) {
+            let solution: u64 = (solution as u64)
+                + self
+                    .optional_idx
+                    .iter()
+                    .map(|x| (self.base_weights[*x] as u64) * days_n as u64)
+                    .sum::<u64>();
+            let val = self.evaluate_solution(&solution);
+            if val < best {
+                best = val;
+                best_solution = solution;
+            }
+            break;
+        }
+        println!("Best upper bound: {}", best);
+
+        // Branch'n'bound
+        self.bnb(&mut best, &mut best_solution, 0);
+        println!("Best: {}", best);
+    }
+
+    fn bnb(&self, upper_bound: &mut f32, best_solution: &mut u64, optional_count: u8) {
+        let _ = subsets(self.optional_idx.len(), optional_count.into()).for_each(|mut subset| {
+            println!("Starting subsets");
+            let max_solution_val = self
+                .base_weights
+                .iter()
+                .zip(&self.bases)
+                .map(|(weight, base)| weight * (base - 1))
+                .map(|x| x as u64)
+                .sum();
+
+            subset = subset << self.mandatory_idx.len();
+            let mut solution = 0;
+            solution += iterate_bits_as_indices(&subset)
+                .map(|x| self.base_weights[x] * (self.bases[x] - 1))
+                .map(|x| x as u64)
+                .sum::<u64>();
+            let sequence_len = self.mandatory_idx.len() + self.optional_idx.len();
+
+            let mut depth = 0;
+            while solution < max_solution_val {
+                println!("A");
+                let mut i = 0;
+                // let score = self.evaluate_solution(&solution);
+                let score = self.partial_evaluate_solution(&solution, depth);
+                if depth == sequence_len {
+                    let score = self.evaluate_solution(&solution);
+                    if score < *upper_bound {
+                        *upper_bound = score;
+                        *best_solution = solution;
+                    }
+                }
+                else if depth < sequence_len && score >= *upper_bound {
+                    solution += (depth..sequence_len)
+                        .map(|x| (self.bases[x] - 1) * self.base_weights[x])
+                        .map(|x| x as u64)
+                        .sum::<u64>();
+                    println!("SKIP");
+                    depth -= 1;
+                    continue;
+                }
+                'incr_loop: while i < sequence_len {
+                    if subset & (1 << i) != 0 {
+                        i += 1;
+                        continue;
+                    }
+                    let digit = (solution / (self.base_weights[i] as u64)) % (self.bases[i] as u64);
+                    if digit + 1 < self.bases[i].into() {
+                        solution += self.base_weights[i] as u64;
+                        depth = i + 1;
+                        break 'incr_loop;
+                    }
+                    i += 1;
+                }
+                if i >= sequence_len {
+                    return;
+                }
+            }
+        });
+    }
+
+    fn evaluate_assignment(&self, assignment: &u32) -> f32 {
+        self.tsp.get(assignment)
+    }
+
+    fn evaluate_solution(&self, solution: &u64) -> f32 {
+        self.solution_to_assignment(*solution)
+            .map(|x| self.evaluate_assignment(&x))
+            .fold(0.0, |a: f32, b| a.max(b))
+    }
+
+    fn partial_evaluate_solution(&self, solution: &u64, depth: usize) -> f32 {
+        let fixed_places = if depth == 32 {
+            u32::MAX
+        } else {
+            (1u32 << depth) - 1
+        };
+        self.solution_to_assignment(*solution)
+            .map(|x| x & fixed_places)
+            .map(|x| self.evaluate_assignment(&x))
+            .fold(0.0, |a: f32, b| a.max(b))
     }
 
     pub fn save(&self) -> Result<()> {
@@ -114,48 +209,5 @@ impl Solver {
         let file = std::fs::File::create(filename)?;
         serde_json::to_writer_pretty(file, &self.best_solutions)?;
         Ok(())
-    }
-}
-
-#[derive(Serialize)]
-pub struct ReadySolution {
-    assignments: Vec<Option<u8>>,
-    max_time: f32,
-    number_of_additional: u8,
-}
-impl ReadySolution {
-    fn new(assignments: Vec<Option<u8>>, solver: &Solver) -> Self {
-        let number_of_additional = assignments
-            .iter()
-            .zip(solver.mandatory.iter())
-            .filter(|(a, b)| if let Some(_) = a { **b } else { false })
-            .map(|(_, b)| if *b { 1 } else { 0 })
-            .sum();
-        let days: Vec<_> = (0..solver.day_weights.len())
-            .map(|day_idx| {
-                assignments
-                    .iter()
-                    .map(|value| {
-                        if let Some(v) = value {
-                            *v as usize == day_idx
-                        } else {
-                            false
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let max_time = days
-            .iter()
-            .map(|day_assignment| solver.tsp.get(day_assignment))
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-
-        Self {
-            assignments,
-            max_time,
-            number_of_additional,
-        }
     }
 }

@@ -2,11 +2,13 @@ use csv;
 use std::{error::Error, fs};
 mod utils;
 mod tsp;
+mod solver;
 use anyhow;
 use dotenvy;
 use utils::{get_matrix, PointOfInterest, Config};
 
 use tsp::{TSPLookup};
+use solver::Solver;
 
 
 fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
@@ -23,9 +25,11 @@ fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
             result[1].parse().unwrap(),
             result[2].parse().unwrap(),
             if result[3] == *"1" { true } else { false },
+            result[4].parse().unwrap(),
         );
         res.push(poi);
     }
+    res.sort_by_key(|x| if x.obligatory { 0 } else { 1 });
     Ok(res)
 }
 
@@ -34,15 +38,16 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let cfg = Config::new().unwrap();
     let mut points_of_interest = read_csv(&String::from("./places.csv")).unwrap();
-    points_of_interest.insert(0, PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true));
+    points_of_interest.insert(0, PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true, 0.0));
 
     let matrix = get_matrix(&points_of_interest).await.expect("File input failed (PoI)");
 
     println!("{}", &matrix);
 
-    TSPLookup::new(&matrix);
+    let tsp = TSPLookup::new(&matrix, &points_of_interest);
 
-    println!("Done");
+    let mut solver = Solver::new(matrix, &points_of_interest, cfg.day_weights, tsp);
+    solver.run();
 
     Ok(())
 }
