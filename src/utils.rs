@@ -108,6 +108,7 @@ impl Display for DistanceMatrix {
 pub struct Config {
     pub origin: (f64, f64),
     pub day_weights: Vec<f32>,
+    pub upper_bound_random_size: usize,
 }
 impl Config {
     pub fn new() -> Result<Self> {

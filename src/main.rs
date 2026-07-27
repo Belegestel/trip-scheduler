@@ -46,8 +46,9 @@ async fn main() -> anyhow::Result<()> {
 
     let tsp = TSPLookup::new(&matrix, &points_of_interest);
 
-    let mut solver = Solver::new(matrix, &points_of_interest, cfg.day_weights, tsp);
+    let mut solver = Solver::new(&points_of_interest, cfg.day_weights, tsp, cfg.upper_bound_random_size);
     solver.run();
+    solver.save();
 
     Ok(())
 }
