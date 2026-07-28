@@ -5,6 +5,7 @@ use crate::{
 use anyhow::Result;
 use rand::{rng, seq::index};
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::HashMap;
 
 pub struct Solver {
@@ -20,6 +21,7 @@ pub struct Solver {
     optional_mask: u32,
     mandatory_mask: u32,
     upper_bound_random_size: usize,
+    poi: Vec<PointOfInterest>,
 }
 impl Solver {
     pub fn new(
@@ -73,6 +75,7 @@ impl Solver {
             optional_mask,
             mandatory_mask,
             upper_bound_random_size,
+            poi: poi.to_vec(),
         }
     }
 
@@ -235,6 +238,13 @@ impl Solver {
             .zip(self.day_weights.iter())
             .map(|(eval, weight)| eval / weight)
             .fold(0.0, |a: f32, b| a.max(b))
+            +
+            self
+            .solution_to_assignment(*solution)
+            .map(|x| self.evaluate_assignment(&x))
+            .zip(self.day_weights.iter())
+            .map(|(eval, weight)| eval / weight)
+            .sum::<f32>() * 0.0001
     }
 
     fn partial_evaluate_solution(&self, solution: &u64, depth: usize) -> f32 {
@@ -249,9 +259,23 @@ impl Solver {
             .zip(self.day_weights.iter())
             .map(|(eval, weight)| eval / weight)
             .fold(0.0, |a: f32, b| a.max(b))
+            +
+            self
+            .solution_to_assignment(*solution)
+            .map(|x| self.evaluate_assignment(&x))
+            .zip(self.day_weights.iter())
+            .map(|(eval, weight)| eval / weight)
+            .sum::<f32>() * 0.0001
     }
 
     pub fn save(&self) -> Result<()> {
+
+        #[derive(Serialize)]
+        struct SaveStruct {
+            assignments: HashMap<u8, (Vec<f32>, Vec<u8>)>,
+            names: Vec<String>,
+        }
+
         let filename = format!(
             "results/{}.json",
             std::time::SystemTime::now()
@@ -260,7 +284,7 @@ impl Solver {
                 .as_secs()
         );
         let mut save_var: HashMap<u8, (Vec<f32>, Vec<u8>)> = HashMap::new();
-        for (k, (assignment, time)) in self.best_solutions.iter() {
+        for (k, (assignment, _)) in self.best_solutions.iter() {
             let display_assignment: Vec<u8> = self
                 .base_weights
                 .iter()
@@ -276,8 +300,11 @@ impl Solver {
 
         println!("Save data: {:?}", save_var);
 
+        let packed_data = SaveStruct { assignments: save_var, names: self.poi.iter().map(|x| x.name.clone()).collect() };
+
+
         let file = std::fs::File::create(filename)?;
-        serde_json::to_writer_pretty(file, &save_var)?;
+        serde_json::to_writer_pretty(file, &packed_data)?;
         Ok(())
     }
 }

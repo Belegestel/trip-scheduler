@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut solver = Solver::new(&points_of_interest, cfg.day_weights, tsp, cfg.upper_bound_random_size);
     solver.run();
-    solver.save();
+    let _ = solver.save();
 
     Ok(())
 }

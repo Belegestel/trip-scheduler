@@ -38,7 +38,7 @@ impl TSPLookup {
                     .map(|x| g[get_idx(subset.try_into().unwrap(), x)] + dm.durations[x + 1][0])
                     .fold(f32::INFINITY, |a, b| a.min(b))
                     + iterate_bits_as_indices(&subset)
-                        .map(|x| poi[x + 1].duration)
+                        .map(|x| poi[x + 1].duration * 60.0)
                         .sum::<f32>()
             })
             .collect();
