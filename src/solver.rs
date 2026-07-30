@@ -242,8 +242,6 @@ impl Solver {
             self
             .solution_to_assignment(*solution)
             .map(|x| self.evaluate_assignment(&x))
-            .zip(self.day_weights.iter())
-            .map(|(eval, weight)| eval / weight)
             .sum::<f32>() * 0.0001
     }
 
@@ -263,8 +261,6 @@ impl Solver {
             self
             .solution_to_assignment(*solution)
             .map(|x| self.evaluate_assignment(&x))
-            .zip(self.day_weights.iter())
-            .map(|(eval, weight)| eval / weight)
             .sum::<f32>() * 0.0001
     }
 
