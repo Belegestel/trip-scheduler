@@ -16,7 +16,7 @@ if __name__ == '__main__':
         exit()
 
     fname = '.'.join(target_file.split('/')[-1].split('\\')[-1].split('.')[:-1])
-    dest_fname = './results/parsed/' + fname
+    dest_fname = './results/parsed/' + input('Destination filename:').strip()
 
     # DATA READ
 
