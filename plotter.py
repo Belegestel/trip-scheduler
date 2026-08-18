@@ -1,6 +1,7 @@
 import sys
 import matplotlib.pyplot as plt
 import json
+from markdown_pdf import MarkdownPdf, Section
 
 def convert_time(time: float) -> str:
     # Seconds to a nice [X]h[Y]' display.
@@ -58,6 +59,10 @@ if __name__ == '__main__':
         res += local_res + '\n'
     with open(dest_fname + '.md', 'w+') as file:
         file.write(res);
+    pdf = MarkdownPdf()
+    pdf.meta['title'] = dest_fname.strip('/')[-1]
+    pdf.add_section(Section(res))
+    pdf.save(dest_fname + '.pdf')
     # print(res)
 
 
