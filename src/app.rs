@@ -2,9 +2,9 @@ use eframe::egui;
 use egui::Color32;
 use itertools::Itertools;
 use walkers;
-use std::{env, fmt::format, fs, io::Write};
+use std::{env, fmt::format, fs, io::Write, sync::mpsc::{self, channel}};
 
-use crate::{utils::{Config, PointOfInterest, read_csv}};
+use crate::{solver::{self, Solver}, tsp::TSPLookup, utils::{Config, PointOfInterest, get_matrix, read_csv}};
 
 struct MapData {
     tiles: walkers::HttpTiles,
@@ -21,6 +21,16 @@ enum OpenedPopup {
     None,
 }
 
+#[derive(PartialEq)]
+pub enum ProgressBar {
+    Init,
+    Matrix,
+    TSP(f32),
+    Solver(f32),
+    Done,
+    Failed,
+}
+
 struct MyApp {
     is_api_key_removed: bool,
     active_file: Option<String>,
@@ -30,6 +40,8 @@ struct MyApp {
     poi: Option<Vec<PointOfInterest>>,
     existing_files: Vec<String>,
     map: MapData,
+    mpsc_receiver: Option<mpsc::Receiver<ProgressBar>>,
+    computation_state: ProgressBar,
 }
 impl MyApp {
     fn new(creation_context: &eframe::CreationContext) -> Self{
@@ -45,7 +57,9 @@ impl MyApp {
                 tiles: walkers::HttpTiles::new(walkers::sources::OpenStreetMap, creation_context.egui_ctx.to_owned()),
                 map_memory: walkers::MapMemory::default(),
                 selected_position: None,
-            }
+            },
+            mpsc_receiver: None,
+            computation_state: ProgressBar::Init
         };
         res.check_existing_files();
         return res;
@@ -81,7 +95,7 @@ impl MyApp {
                     place.name,
                     place.location.0,
                     place.location.1,
-                    place.obligatory,
+                    if place.obligatory { 1 } else { 0 },
                     place.duration,
                 ).unwrap();
             }
@@ -205,21 +219,108 @@ impl eframe::App for MyApp {
             }
         });
         if self.opened_popup == OpenedPopup::Running {
-            let cfg = self.config.unwrap();
-            let poi = self.poi.unwrap();
+            let new_resp = self.mpsc_receiver.as_ref().unwrap().try_recv();
+            match new_resp {
+                Ok(v) => self.computation_state = match v {
+                    ProgressBar::Solver(_) => {
+                        let diff = self.poi.as_ref().unwrap().iter().filter(|x| !x.obligatory).collect::<Vec<_>>().len();
+                        if let ProgressBar::Solver(v) = self.computation_state {
+                            ProgressBar::Solver(v + 1.0 / (diff as f32))
+                        }
+                        else {
+                            ProgressBar::Solver(1.0 / (diff as f32))
+                        }
+                    },
+                    v => v,
+                },
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.computation_state != ProgressBar::Done { 
+                        self.computation_state = ProgressBar::Failed;
+                    }
+                },
+                Err(mpsc::TryRecvError::Empty) => {}
+            };
             egui::Window::new("Plan a new trip")
                 .resizable(false)
                 .collapsible(false)
                 .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}/4", match self.computation_state {
+                            ProgressBar::Init => 0,
+                            ProgressBar::Matrix => 1,
+                            ProgressBar::TSP(_) => 2,
+                            ProgressBar::Solver(_) => 3,
+                            ProgressBar::Done => 4,
+                            ProgressBar::Failed => 0,
+                        }));
+                        ui.add(
+                            egui::ProgressBar::new(match self.computation_state {
+                                ProgressBar::TSP(v) => v,
+                                ProgressBar::Solver(v) => v,
+                                ProgressBar::Done => 1.0,
+                                _ => 0.0
+                            })
+                        )
+                    });
+                    let mut button_visible = false;
+                    if let ProgressBar::Failed = self.computation_state {
+                        ui.heading("The computation process has failed. Consider trying again.");
+                        button_visible = true;
+                    }
+                    if let ProgressBar::Done = self.computation_state {
+                        ui.heading("Computation has completed, the file has been saved.");
+                        button_visible = true;
+                    }
+                    if button_visible {
+                        if ui.button("Close").clicked() {
+                            self.opened_popup = OpenedPopup::None;
+                        }
+                    }
                 });
         }
         egui::Panel::bottom("bottom-panel-main").show(ui, |ui| {
             ui.horizontal(|ui|{
-                if ui.button("Run calculation").clicked() {
+                let run_calc_btn = ui.add_enabled_ui(if let Some(_) = self.active_file { true } else { false }, |ui| ui.button("Run calculation"));
+                let save_btn = ui.add_enabled_ui(if let Some(_) = self.active_file { true } else { false }, |ui| ui.button("Save without running"));
+                if run_calc_btn.inner.clicked() {
                     self.save_trip_config();
                     self.opened_popup = OpenedPopup::Running;
+                    self.computation_state = ProgressBar::Init;
+                    let cfg = self.config.as_ref().unwrap();
+                    let day_weights = cfg.day_weights.clone();
+                    let upper_bound_random_size = cfg.upper_bound_random_size;
+                    let filename = self.active_file.as_ref().to_owned().unwrap().to_string();
+                    let mut poi = self.poi.clone().unwrap();
+                    poi.insert(
+                        0,
+                        PointOfInterest::new("Origin".to_string(), cfg.origin.0, cfg.origin.1, true, 0.0)
+                    );
+                    let (tx, rx) = channel();
+                    self.mpsc_receiver = Some(rx);
+                    std::thread::spawn(move || {
+                        let runtime = tokio::runtime::Runtime::new().unwrap();
+                        runtime.block_on(async move {
+                            tx.send(ProgressBar::Init).unwrap();
+                            let matrix = get_matrix(&poi, &filename)
+                                .await
+                                .expect("File input failed (PoI)");
+                            tx.send(ProgressBar::Matrix).unwrap();
+                            let tsp = TSPLookup::new(&matrix, &poi, &tx);
+                            let mut solver = Solver::new(
+                                &poi,
+                                day_weights,
+                                tsp,
+                                upper_bound_random_size,
+                                &tx,
+                                &filename
+                            );
+                            solver.run();
+                            let _ = solver.save();
+                            tx.send(ProgressBar::Done).unwrap();
+                        })
+                    });
                 }
-                if ui.button("Save without running").clicked() {
+                if save_btn.inner.clicked() {
                     self.save_trip_config();
                 }
             });
@@ -295,7 +396,7 @@ impl eframe::App for MyApp {
                                 .on_hover_text("Do we have to stop here? Or is it just optional?")
                                 .on_hover_cursor(egui::CursorIcon::Help);
                             ui.label("Duration")
-                                .on_hover_text("This indicates how much time you intend to spend in the given place. Great for museums and cafes!")
+                                .on_hover_text("This indicates how much time (in minutes) you intend to spend in the given place. Great for museums and cafes!")
                                 .on_hover_cursor(egui::CursorIcon::Help);
                             ui.end_row();
                             for (idx, row) in self.poi.as_mut().unwrap().iter_mut().enumerate() {
@@ -360,7 +461,6 @@ fn get_api_key() -> Result<bool, eframe::Error> {
                 
                 let btn = ui.add_enabled_ui(new_key.len() > 0, |ui| ui.button("Submit"));
                 if btn.inner.clicked() {
-                    println!("Writing!");
                     fs::write(".env", format!("API_KEY=\"{}\"", new_key)).expect("Cannot write to file");
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -372,7 +472,6 @@ fn get_api_key() -> Result<bool, eframe::Error> {
     } else {
         dotenvy::dotenv().unwrap();
         let api_key = env::var("API_KEY");
-        println!("API key: {:?}", api_key);
         return Ok(
             match api_key {
                 Ok(_) => true,

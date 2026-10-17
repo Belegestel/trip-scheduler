@@ -1,12 +1,11 @@
 use crate::{
-    tsp::TSPLookup,
-    utils::{PointOfInterest, iterate_bits_as_indices, subsets},
+    app::ProgressBar, tsp::TSPLookup, utils::{PointOfInterest, iterate_bits_as_indices, subsets},
 };
 use anyhow::Result;
 use rand::{rng, seq::index};
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::mpsc};
 
 pub struct Solver {
     pub day_weights: Vec<f32>,
@@ -20,6 +19,8 @@ pub struct Solver {
     mandatory_mask: u32,
     upper_bound_random_size: usize,
     poi: Vec<PointOfInterest>,
+    tx: mpsc::Sender<ProgressBar>,
+    filename: String,
 }
 impl Solver {
     pub fn new(
@@ -27,6 +28,8 @@ impl Solver {
         day_weights: Vec<f32>,
         tsp: TSPLookup,
         upper_bound_random_size: usize,
+        tx: &mpsc::Sender<ProgressBar>,
+        filename: &str,
     ) -> Self {
         let mandatory: Vec<bool> = poi.iter().map(|x| x.obligatory).collect();
         let mandatory_idx: Vec<usize> = mandatory
@@ -71,6 +74,9 @@ impl Solver {
             mandatory_mask,
             upper_bound_random_size,
             poi: poi.to_vec(),
+
+            tx: tx.clone(),
+            filename: filename.to_owned(),
         }
     }
 
@@ -145,11 +151,14 @@ impl Solver {
         let _ = self.best_solutions.insert(0, (best_solution, best));
 
         let res: Vec<_> = (1..=self.optional_idx.len() as u8)
+            .map(|x| (x, self.tx.clone()))
+            .collect::<Vec<_>>()
             .into_par_iter()
-            .map(|optional_count| {
+            .map(|(optional_count, tx)| {
                 let mut upper_bound = f32::MAX;
                 let mut best_solution = 0;
                 self.bnb(&mut upper_bound, &mut best_solution, optional_count);
+                tx.send(ProgressBar::Solver(0.0)).unwrap();
                 (best_solution, upper_bound)
             })
             .collect();
@@ -267,13 +276,6 @@ impl Solver {
             names: Vec<String>,
         }
 
-        let filename = format!(
-            "results/{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-        );
         let mut save_var: HashMap<u8, (Vec<f32>, Vec<u8>)> = HashMap::new();
         for (k, (assignment, _)) in self.best_solutions.iter() {
             let display_assignment: Vec<u8> = self
@@ -294,7 +296,7 @@ impl Solver {
         let packed_data = SaveStruct { assignments: save_var, names: self.poi.iter().map(|x| x.name.clone()).collect() };
 
 
-        let file = std::fs::File::create(filename)?;
+        let file = std::fs::File::create(format!("./results/{}.json", self.filename))?;
         serde_json::to_writer_pretty(file, &packed_data)?;
         Ok(())
     }

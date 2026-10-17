@@ -137,13 +137,14 @@ impl Config {
     }
 }
 
-pub async fn get_matrix(points: &Vec<PointOfInterest>) -> Result<DistanceMatrix> {
+pub async fn get_matrix(points: &Vec<PointOfInterest>, filename: &str) -> Result<DistanceMatrix> {
     let coords: Vec<[f64; 2]> = points
         .iter()
         .map(|x| [x.location.1, x.location.0])
         .collect();
     let labels: Vec<String> = points.iter().map(|x| x.name.clone()).collect();
-    let target_file = Path::new("./data/cache.json");
+    let filename = format!("./cache/{}.json", filename);
+    let target_file = Path::new(&filename);
     if target_file.exists() {
         println!("Using cached data...");
         let cached = fs::read_to_string(target_file)?;
