@@ -42,8 +42,8 @@ impl MyApp {
         let mut cfg_file = fs::File::create(format!("trips/{}.json", self.active_file.clone().unwrap())).expect("Cannot create a trip file");
         let mut places_file = fs::File::create(format!("trips/{}.csv", self.active_file.clone().unwrap())).expect("Cannot create a trip file");
         writeln!(cfg_file, "{{").unwrap();
-        writeln!(cfg_file, "\t\"day_weights\": [],").unwrap();
-        writeln!(cfg_file, "\t\"origin\": [0.0, 0.0],").unwrap();
+        writeln!(cfg_file, "\t\"day_weights\": [{}],", self.config.as_ref().unwrap().day_weights.iter().map(|x| x.to_string()).join(", ")).unwrap();
+        writeln!(cfg_file, "\t\"origin\": [{}, {}],", self.config.as_ref().unwrap().origin.0, self.config.as_ref().unwrap().origin.1).unwrap();
         writeln!(cfg_file, "\t\"upper_bound_random_size\": 1000000").unwrap();
         writeln!(cfg_file, "}}").unwrap();
 
@@ -129,31 +129,36 @@ impl eframe::App for MyApp {
             }
         });
         egui::CentralPanel::default_margins().show(ui, |ui| {
-            let config = self.config.as_mut().unwrap();
             if let None = self.active_file {
                 ui.heading("To edit a trip, create a new trip in the menu bar");
             }
             else {
                 ui.heading("Configuration");
-                let number_of_days = config.day_weights.len();
+                let number_of_days = self.config.as_ref().unwrap().day_weights.len();
                 ui.horizontal(|ui| {
-                    ui.label(format!("Days ({})", number_of_days));
-                    for day in config.day_weights.iter_mut() {
+                    ui.label(format!("Days ({})", number_of_days))
+                        .on_hover_cursor(egui::CursorIcon::Help)
+                        .on_hover_text("This parameter describes how much time every day has. If all days are equal, set them all to 1. However, if there is a shorter day (e.g. you're leaving in the evening or arriving midday), set it to a proportionally lower value, e.g. 0.5 for half of the day - this will assign proportionally less points of interest to that particular day.");
+                    let mut idx_to_remove = None;
+                    for (idx, day) in self.config.as_mut().unwrap().day_weights.iter_mut().enumerate() {
                         *day = (100.0 * *day).round() / 100.0;
-                        let mut day_display = day.to_string();
-                        ui.text_edit_singleline(&mut day_display);
-                        day_display = day_display
-                            .chars()
-                            .filter(|x| "0123456789.".contains(*x))
-                            .collect();
-                        *day = day_display.parse().unwrap();
+                        ui.vertical(|ui|{
+                            ui.add(
+                                egui::DragValue::new(day).max_decimals(2).range(0.0..=f32::INFINITY).speed(0.01)
+                            );
+                            if ui.button(" - ").clicked() {
+                                idx_to_remove = Some(idx);
+                            }
+                        });
                     }
                     if ui.button(" + ").clicked() {
-                        config.day_weights.push(1.0);
+                        self.config.as_mut().unwrap().day_weights.push(1.0);
+                    }
+                    if let Some(idx) = idx_to_remove {
+                        let _ = self.config.as_mut().unwrap().day_weights.remove(idx);
                     }
 
                 });
-                self.config = Some(config);
                 ui.separator();
                 ui.heading("Points of Interest");
                 ui.separator();
