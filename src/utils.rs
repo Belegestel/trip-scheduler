@@ -1,7 +1,7 @@
 use anyhow::Result;
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::{env, fmt::Display, fs, path::Path};
+use std::{env, fmt::Display, fs, path::Path, error::Error};
 
 #[derive(Debug, Clone)]
 pub struct PointOfInterest {
@@ -218,4 +218,35 @@ pub fn iterate_bits_as_indices(num: &u32) -> impl Iterator<Item = usize> {
         }
         None
     })
+}
+
+pub fn read_csv(path: &String) -> Result<Vec<PointOfInterest>, Box<dyn Error>> {
+    let mut res = vec![];
+    let file_contents = fs::read_to_string(path).expect("Should have been able to read the file");
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(b';')
+        .from_reader(file_contents.as_bytes());
+    for result in rdr.records() {
+        let result = result?;
+        let poi = PointOfInterest::new(
+            result[0].to_string(),
+            result[1].parse().unwrap(),
+            result[2].parse().unwrap(),
+            if result[3] == *"1" { true } else { false },
+            result[4].parse().unwrap(),
+        );
+        res.push(poi);
+    }
+    res.sort_by_key(|x| if x.obligatory { 0 } else { 1 });
+    Ok(res)
+}
+
+pub fn file_config() {
+    if !fs::exists(".env").expect("Unable to access the filesystem") {
+        let _ = fs::File::create(".env");
+    }
+    let _ = fs::create_dir("trips");
+    let _ = fs::create_dir("results");
+    let _ = fs::create_dir("cache");
 }

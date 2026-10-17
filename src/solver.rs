@@ -9,7 +9,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 pub struct Solver {
-    pub mandatory: Vec<bool>,
     pub day_weights: Vec<f32>,
     pub best_solutions: HashMap<u8, (u64, f32)>, // Optional count, (assignment, time)
     tsp: TSPLookup,
@@ -18,7 +17,6 @@ pub struct Solver {
     mandatory_idx: Vec<usize>,
     optional_idx: Vec<usize>,
     sequence_len: usize,
-    optional_mask: u32,
     mandatory_mask: u32,
     upper_bound_random_size: usize,
     poi: Vec<PointOfInterest>,
@@ -60,10 +58,8 @@ impl Solver {
                 res
             })
             .collect();
-        let optional_mask = optional_idx.iter().map(|x| 1u32 << x).sum();
         let mandatory_mask = mandatory_idx.iter().map(|x| 1u32 << x).sum();
         Self {
-            mandatory,
             day_weights,
             best_solutions: HashMap::new(),
             tsp,
@@ -72,7 +68,6 @@ impl Solver {
             mandatory_idx,
             optional_idx,
             sequence_len,
-            optional_mask,
             mandatory_mask,
             upper_bound_random_size,
             poi: poi.to_vec(),
