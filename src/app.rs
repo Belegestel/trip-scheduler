@@ -1,29 +1,53 @@
-use eframe;
+use eframe::egui;
+use egui::Color32;
 use itertools::Itertools;
-use std::{env, fs, io::Write};
+use walkers;
+use std::{env, fmt::format, fs, io::Write};
 
-use crate::utils::{Config, PointOfInterest, read_csv};
+use crate::{utils::{Config, PointOfInterest, read_csv}};
+
+struct MapData {
+    tiles: walkers::HttpTiles,
+    map_memory: walkers::MapMemory,
+    selected_position: Option<(f64, f64)>
+}
+
+#[derive(PartialEq)]
+enum OpenedPopup {
+    NewTrip,
+    OriginMap,
+    PoI(usize),
+    None
+}
 
 struct MyApp {
     is_api_key_removed: bool,
     active_file: Option<String>,
     new_filename: String,
-    new_trip_popup: bool,
+    opened_popup: OpenedPopup,
     config: Option<Config>,
     trip_places: Option<Vec<PointOfInterest>>,
     existing_files: Vec<String>,
+    map: MapData,
 }
 impl MyApp {
-    fn new() -> Self{
-        Self {
+    fn new(creation_context: &eframe::CreationContext) -> Self{
+        let mut res = Self {
             is_api_key_removed: false,
             active_file: None,
             new_filename: "".to_string(),
-            new_trip_popup: false,
+            opened_popup: OpenedPopup::None,
             config: None,
             trip_places: None,
             existing_files: vec![],
-        }
+            map: MapData {
+                tiles: walkers::HttpTiles::new(walkers::sources::OpenStreetMap, creation_context.egui_ctx.to_owned()),
+                map_memory: walkers::MapMemory::default(),
+                selected_position: None,
+            }
+        };
+        res.check_existing_files();
+        return res;
     }
     fn check_existing_files(self: &mut Self) {
         let mut existing_files = fs::read_dir("trips")
@@ -68,6 +92,55 @@ impl MyApp {
         self.trip_places = Some(read_csv(&format!("trips/{}.csv", filename)).unwrap());
         self.active_file = Some(filename.to_string());
     }
+    fn map_popup(self: &mut Self, ui: &mut egui::Ui, start_pos: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        // returns either None or Some((lat, lon))
+        if let Some(v) = start_pos {
+            if let None = self.map.selected_position {
+                self.map.selected_position = Some(v);
+            }
+        }
+        let mut res = None;
+        egui::Window::new("Plan a new trip")
+            .resizable(false)
+            .collapsible(false)
+            .show(ui.ctx(), |ui| {
+                let is_enabled = if let Some(_) = self.map.selected_position { true } else { false };
+                ui.horizontal(|ui| {
+                    if ui.add_enabled_ui(is_enabled, |ui| ui.button("Select position")).inner.clicked() {
+                        res = self.map.selected_position;
+                        self.map.selected_position = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.map.selected_position = None;
+                        self.opened_popup = OpenedPopup::None;
+                    }
+                });
+                ui.allocate_ui(egui::vec2(600.0, 400.0), |ui| {
+                    let _ = walkers::Map::new(
+                            Some(&mut self.map.tiles),
+                            &mut self.map.map_memory,
+                            walkers::lon_lat(0.0, 0.0)
+                        ).zoom_with_ctrl(false).show(ui, |ui, response, projector, _| {
+                        if let Some((lat, lon)) = self.map.selected_position {
+                            let screen_pos = projector.project(
+                                walkers::lon_lat(lon, lat)
+                            );
+                            ui.painter().circle_filled(screen_pos.to_pos2(), 2.0, Color32::RED);
+                        }
+                        if response.clicked() {
+                            if let Some(pointer_pos) = response.interact_pointer_pos() {
+                                let position = projector.unproject(pointer_pos.to_vec2());
+                                let lat = position.y();
+                                let lon = position.x();
+                                self.map.selected_position = Some((lat, lon));
+                            }
+                        }
+                    });
+                });
+        });
+        res
+    }
+
 }
 impl eframe::App for MyApp {
     fn ui(self: &mut Self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -77,10 +150,10 @@ impl eframe::App for MyApp {
         egui::MenuBar::new().ui(ui, |ui| {
             let new_trip_btn = ui.button("New trip");
             if new_trip_btn.clicked() {
-                self.new_trip_popup = true;
+                self.opened_popup = OpenedPopup::NewTrip;
                 self.check_existing_files();
             }
-            if self.new_trip_popup {
+            if self.opened_popup == OpenedPopup::NewTrip {
                 egui::Window::new("Plan a new trip")
                     .resizable(false)
                     .collapsible(false)
@@ -89,7 +162,7 @@ impl eframe::App for MyApp {
                         ui.text_edit_singleline(&mut self.new_filename);
                         let save_btn = ui.add_enabled_ui(self.new_filename.len() > 0, |ui| ui.button("Save"));
                         if ui.button("Cancel").clicked() {
-                            self.new_trip_popup = false;
+                            self.opened_popup = OpenedPopup::None;
                         }
                         let does_exist = fs::exists(&self.new_filename).expect("Unable to access the filesystem"); 
                         if does_exist {
@@ -99,7 +172,7 @@ impl eframe::App for MyApp {
                             self.active_file = Some(self.new_filename.clone());
                             self.new_filename = "".to_string();
                             self.save_trip_config();
-                            self.new_trip_popup = false;
+                            self.opened_popup = OpenedPopup::None;
                         }
                     }
                 );
@@ -135,30 +208,57 @@ impl eframe::App for MyApp {
             else {
                 ui.heading("Configuration");
                 let number_of_days = self.config.as_ref().unwrap().day_weights.len();
-                ui.horizontal(|ui| {
-                    ui.label(format!("Days ({})", number_of_days))
-                        .on_hover_cursor(egui::CursorIcon::Help)
-                        .on_hover_text("This parameter describes how much time every day has. If all days are equal, set them all to 1. However, if there is a shorter day (e.g. you're leaving in the evening or arriving midday), set it to a proportionally lower value, e.g. 0.5 for half of the day - this will assign proportionally less points of interest to that particular day.");
-                    let mut idx_to_remove = None;
-                    for (idx, day) in self.config.as_mut().unwrap().day_weights.iter_mut().enumerate() {
-                        *day = (100.0 * *day).round() / 100.0;
-                        ui.vertical(|ui|{
-                            ui.add(
-                                egui::DragValue::new(day).max_decimals(2).range(0.0..=f32::INFINITY).speed(0.01)
-                            );
-                            if ui.button(" - ").clicked() {
-                                idx_to_remove = Some(idx);
-                            }
-                        });
-                    }
-                    if ui.button(" + ").clicked() {
-                        self.config.as_mut().unwrap().day_weights.push(1.0);
-                    }
-                    if let Some(idx) = idx_to_remove {
-                        let _ = self.config.as_mut().unwrap().day_weights.remove(idx);
-                    }
-
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Days ({})", number_of_days))
+                            .on_hover_cursor(egui::CursorIcon::Help)
+                            .on_hover_text("This parameter describes how much time every day has. If all days are equal, set them all to 1. However, if there is a shorter day (e.g. you're leaving in the evening or arriving midday), set it to a proportionally lower value, e.g. 0.5 for half of the day - this will assign proportionally less points of interest to that particular day.");
+                        let mut idx_to_remove = None;
+                        for (idx, day) in self.config.as_mut().unwrap().day_weights.iter_mut().enumerate() {
+                            *day = (100.0 * *day).round() / 100.0;
+                            ui.vertical(|ui|{
+                                ui.add(
+                                    egui::DragValue::new(day).max_decimals(2).range(0.0..=f32::INFINITY).speed(0.01)
+                                );
+                                if ui.button(" - ").clicked() {
+                                    idx_to_remove = Some(idx);
+                                }
+                            });
+                        }
+                        if ui.button(" + ").clicked() {
+                            self.config.as_mut().unwrap().day_weights.push(1.0);
+                        }
+                        if let Some(idx) = idx_to_remove {
+                            let _ = self.config.as_mut().unwrap().day_weights.remove(idx);
+                        }
+                    });
                 });
+
+                if ui.button("Set origin")
+                    .on_hover_text("This is the place from which you will be departing every day.")
+                    .on_hover_cursor(egui::CursorIcon::Help)
+                    .clicked() {
+                    self.opened_popup = OpenedPopup::OriginMap;
+                }
+                ui.label(format!(
+                    "Current origin: ({:.3}, {:.3})",
+                    self.config.as_ref().unwrap().origin.0,
+                    self.config.as_ref().unwrap().origin.1,
+                ));
+                if self.opened_popup == OpenedPopup::OriginMap {
+                    let original_coords = self.config.as_ref().unwrap().origin;
+                    let starting_pos = {
+                        if original_coords.0 != 0.0 && original_coords.1 != 0.0 {
+                            Some(original_coords) 
+                        } else { None }
+                    };
+                    let res = self.map_popup(ui, starting_pos);
+                    if let Some(v) = res {
+                        self.config.as_mut().unwrap().origin = v;
+                        self.opened_popup = OpenedPopup::None;
+                    }
+                }
+                
                 ui.separator();
                 ui.heading("Points of Interest");
                 ui.separator();
@@ -216,7 +316,7 @@ fn run_app() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Trip finder",
         eframe::NativeOptions::default(), 
-        Box::new(|_| Ok(Box::new(MyApp::new())))
+        Box::new(|cc| Ok(Box::new(MyApp::new(cc))))
     )
 }
 
