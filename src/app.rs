@@ -129,6 +129,7 @@ impl MyApp {
                         self.map.selected_position = None;
                         self.opened_popup = OpenedPopup::None;
                     }
+                    ui.label("Map data from OpenStreetMap");
                 });
                 ui.allocate_ui(egui::vec2(600.0, 400.0), |ui| {
                     let start_pos = if let Some(v) = start_pos { v } 

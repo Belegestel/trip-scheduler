@@ -4,7 +4,6 @@ use std::{io::Write, sync::mpsc};
 pub struct TSPLookup(Vec<f32>);
 impl TSPLookup {
     pub fn new(dm: &DistanceMatrix, poi: &Vec<PointOfInterest>, tx: &mpsc::Sender<ProgressBar>) -> Self {
-        println!("DM: {}, POI: {}", dm.distances.len(), poi.len());
         let n = dm.durations.len();
         let mut g: Vec<f32> = vec![f32::INFINITY; (1usize << (n - 1)) * (n - 1)];
         let get_idx = |subset: usize, node: usize| subset * (n - 1) + node;
@@ -13,11 +12,6 @@ impl TSPLookup {
         }
 
         for size in 2..n {
-            println!(
-                "\x1B[1A\x1B[2KPath computation: [{}{}]",
-                "#".repeat(size - 2),
-                ".".repeat(n - size - 1)
-            );
             tx.send(ProgressBar::TSP(size as f32 / ((n - 1) as f32))).unwrap();
             std::io::stdout().flush().unwrap();
             for subset in subsets(n - 1, size) {

@@ -229,7 +229,6 @@ impl Solver {
                 );
                 self.dfs(upper_bound, best_solution, &subset, 0, 0, &base_value);
             });
-        println!("Best with {} optionals: {}", optional_count, upper_bound);
     }
 
     fn evaluate_assignment(&self, assignment: &u32) -> f32 {
@@ -290,8 +289,6 @@ impl Solver {
                 .collect();
             save_var.insert(*k, (times, display_assignment));
         }
-
-        println!("Save data: {:?}", save_var);
 
         let packed_data = SaveStruct { assignments: save_var, names: self.poi.iter().map(|x| x.name.clone()).collect() };
 
