@@ -2,9 +2,9 @@ use eframe::egui;
 use egui::Color32;
 use itertools::Itertools;
 use walkers;
-use std::{env, fmt::format, fs, io::Write, sync::mpsc::{self, channel}};
+use std::{env, fs, io::Write, sync::mpsc::{self, channel}};
 
-use crate::{solver::{self, Solver}, tsp::TSPLookup, utils::{Config, PointOfInterest, get_matrix, read_csv}};
+use crate::{solver::Solver, tsp::TSPLookup, utils::{Config, PointOfInterest, get_matrix, read_csv}};
 
 struct MapData {
     tiles: walkers::HttpTiles,
@@ -280,8 +280,11 @@ impl eframe::App for MyApp {
         }
         egui::Panel::bottom("bottom-panel-main").show(ui, |ui| {
             ui.horizontal(|ui|{
-                let run_calc_btn = ui.add_enabled_ui(if let Some(_) = self.active_file { true } else { false }, |ui| ui.button("Run calculation"));
-                let save_btn = ui.add_enabled_ui(if let Some(_) = self.active_file { true } else { false }, |ui| ui.button("Save without running"));
+                let is_btn_enabled = if let Some(_) = self.active_file { true } else { false } 
+                    && if let Some(v) = self.poi.as_ref() { v.len() > 0 } else { false } 
+                    && if let Some(v) = self.config.as_ref() { v.day_weights.len() > 0 } else { false };
+                let run_calc_btn = ui.add_enabled_ui(is_btn_enabled, |ui| ui.button("Run calculation"));
+                let save_btn = ui.add_enabled_ui(is_btn_enabled, |ui| ui.button("Save without running"));
                 if run_calc_btn.inner.clicked() {
                     self.save_trip_config();
                     self.opened_popup = OpenedPopup::Running;
