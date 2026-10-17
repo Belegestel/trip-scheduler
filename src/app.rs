@@ -17,7 +17,8 @@ enum OpenedPopup {
     NewTrip,
     OriginMap,
     PoI(usize),
-    None
+    Running,
+    None,
 }
 
 struct MyApp {
@@ -26,7 +27,7 @@ struct MyApp {
     new_filename: String,
     opened_popup: OpenedPopup,
     config: Option<Config>,
-    trip_places: Option<Vec<PointOfInterest>>,
+    poi: Option<Vec<PointOfInterest>>,
     existing_files: Vec<String>,
     map: MapData,
 }
@@ -38,7 +39,7 @@ impl MyApp {
             new_filename: "".to_string(),
             opened_popup: OpenedPopup::None,
             config: None,
-            trip_places: None,
+            poi: None,
             existing_files: vec![],
             map: MapData {
                 tiles: walkers::HttpTiles::new(walkers::sources::OpenStreetMap, creation_context.egui_ctx.to_owned()),
@@ -72,7 +73,7 @@ impl MyApp {
         writeln!(cfg_file, "}}").unwrap();
 
         writeln!(places_file, "Location name;Lat;Lon;Obligatory;Duration").unwrap();
-        if let Some(v) = &self.trip_places {
+        if let Some(v) = &self.poi {
             for place in v.iter() {
                 writeln!(
                     places_file,
@@ -89,7 +90,7 @@ impl MyApp {
     fn load_trip_file(self: &mut Self, filename: &str) {
         let file = fs::read_to_string(format!("trips/{}.json", filename)).expect("Cannot read the trip file");
         self.config = serde_json::from_str(&file).expect("Trip file has an incorrect format");
-        self.trip_places = Some(read_csv(&format!("trips/{}.csv", filename)).unwrap());
+        self.poi = Some(read_csv(&format!("trips/{}.csv", filename)).unwrap());
         self.active_file = Some(filename.to_string());
     }
     fn map_popup(self: &mut Self, ui: &mut egui::Ui, start_pos: Option<(f64, f64)>) -> Option<(f64, f64)> {
@@ -116,10 +117,12 @@ impl MyApp {
                     }
                 });
                 ui.allocate_ui(egui::vec2(600.0, 400.0), |ui| {
+                    let start_pos = if let Some(v) = start_pos { v } 
+                    else { self.config.as_ref().unwrap().origin } ;
                     let _ = walkers::Map::new(
                             Some(&mut self.map.tiles),
                             &mut self.map.map_memory,
-                            walkers::lon_lat(0.0, 0.0)
+                            walkers::lon_lat(start_pos.1, start_pos.0)
                         ).zoom_with_ctrl(false).show(ui, |ui, response, projector, _| {
                         if let Some((lat, lon)) = self.map.selected_position {
                             let screen_pos = projector.project(
@@ -201,6 +204,26 @@ impl eframe::App for MyApp {
                 self.is_api_key_removed = true;
             }
         });
+        if self.opened_popup == OpenedPopup::Running {
+            let cfg = self.config.unwrap();
+            let poi = self.poi.unwrap();
+            egui::Window::new("Plan a new trip")
+                .resizable(false)
+                .collapsible(false)
+                .show(ui.ctx(), |ui| {
+                });
+        }
+        egui::Panel::bottom("bottom-panel-main").show(ui, |ui| {
+            ui.horizontal(|ui|{
+                if ui.button("Run calculation").clicked() {
+                    self.save_trip_config();
+                    self.opened_popup = OpenedPopup::Running;
+                }
+                if ui.button("Save without running").clicked() {
+                    self.save_trip_config();
+                }
+            });
+        });
         egui::CentralPanel::default_margins().show(ui, |ui| {
             if let None = self.active_file {
                 ui.heading("To edit a trip, create a new trip in the menu bar");
@@ -248,9 +271,8 @@ impl eframe::App for MyApp {
                 if self.opened_popup == OpenedPopup::OriginMap {
                     let original_coords = self.config.as_ref().unwrap().origin;
                     let starting_pos = {
-                        if original_coords.0 != 0.0 && original_coords.1 != 0.0 {
-                            Some(original_coords) 
-                        } else { None }
+                        if original_coords.0 == 0.0 && original_coords.1 == 0.0 { None }
+                        else { Some(original_coords) }
                     };
                     let res = self.map_popup(ui, starting_pos);
                     if let Some(v) = res {
@@ -261,13 +283,61 @@ impl eframe::App for MyApp {
                 
                 ui.separator();
                 ui.heading("Points of Interest");
-                ui.separator();
-                ui.horizontal(|ui|{
-                    ui.button("Run calculation");
-                    if ui.button("Save without running").clicked() {
-                        self.save_trip_config();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::Grid::new("grid-poi").show(ui, |ui|{
+                            let mut row_to_delete = None;
+                            ui.label("Name");
+                            ui.label("Location");
+                            ui.label("Obligatory")
+                                .on_hover_text("Do we have to stop here? Or is it just optional?")
+                                .on_hover_cursor(egui::CursorIcon::Help);
+                            ui.label("Duration")
+                                .on_hover_text("This indicates how much time you intend to spend in the given place. Great for museums and cafes!")
+                                .on_hover_cursor(egui::CursorIcon::Help);
+                            ui.end_row();
+                            for (idx, row) in self.poi.as_mut().unwrap().iter_mut().enumerate() {
+                                ui.add_sized(
+                                    [300.0, ui.spacing().interact_size.y],
+                                    egui::TextEdit::singleline(&mut row.name),
+                                );
+                                if ui.button(format!("({:.2}, {:.2})", row.location.0, row.location.1)).clicked() {
+                                    self.opened_popup = OpenedPopup::PoI(idx);
+                                }
+                                ui.checkbox(&mut row.obligatory, "");
+                                ui.add(
+                                    egui::DragValue::new(&mut row.duration).max_decimals(1).range(0.0..=f32::INFINITY)
+                                );
+                                if ui.button(" - ").clicked() {
+                                    row_to_delete = Some(idx);
+                                }
+                                ui.end_row();
+                            }
+                            if ui.button(" + ").clicked() {
+                                let start_pos = if let Some(v) = self.config.as_ref() {
+                                    (v.origin.0, v.origin.1)
+                                }
+                                else { (0.0, 0.0) };
+                                self.poi.as_mut().unwrap().push(PointOfInterest::new("".to_string(), start_pos.0, start_pos.1, false, 0.0))
+                            }
+                            if let Some(idx) = row_to_delete {
+                                self.poi.as_mut().unwrap().remove(idx);
+                            }
+                        });
                     }
-                });
+                );
+                if let OpenedPopup::PoI(idx) = self.opened_popup {
+                    let coords = self.poi.as_ref().unwrap().get(idx).unwrap().location;
+                    let coords = (coords.0, coords.1);
+                    let coords = if coords.0 == 0.0 && coords.1 == 0.0 { None } else { Some(coords) };
+                    let res = self.map_popup(ui, coords);
+                    if let Some((lat, lon)) = res {
+                        self.poi.as_mut().unwrap().get_mut(idx).unwrap().location = (lat, lon);
+                        self.opened_popup = OpenedPopup::None;
+                    }
+                }
             }
         });
     }
